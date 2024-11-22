@@ -16,8 +16,8 @@
     - name: Ensure PasswordAuthentication is set to no in sshd_config
       ansible.builtin.lineinfile:
         path: "{{ ssh_config_path }}"
-        regexp: '^PasswordAuthentication'
-        line: 'PasswordAuthentication no'
+        regexp: "^PasswordAuthentication"
+        line: "PasswordAuthentication no"
         state: present
         backup: true
 
