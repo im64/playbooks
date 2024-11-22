@@ -1,4 +1,25 @@
 ---
+- name: Update and upgrade apt packages
+  hosts: new
+  become: true
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      register: apt_update
+
+    - name: Upgrade apt packages
+      ansible.builtin.apt:
+        upgrade: dist
+      when: apt_update.changed
+      register: apt_upgrade
+
+    - name: Clean up unused packages
+      ansible.builtin.apt:
+        autoremove: yes
+      when: apt_upgrade.changed
+
 - name: Configure SSH
   hosts: new
   become: true
@@ -129,13 +150,4 @@
         line: "export PATH=$PATH:/usr/local/go/bin"
         state: present
       when: golang_needed
-      changed_when: false
-
-    - name: Verify Golang installation
-      ansible.builtin.shell: |
-        source ~/.bashrc && go version
-      args:
-        executable: /bin/bash
-      when: golang_needed
-      register: go_version_check
       changed_when: false
