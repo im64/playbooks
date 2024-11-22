@@ -1,0 +1,141 @@
+---
+- name: Configure SSH
+  hosts: new
+  become: true
+  vars:
+    ssh_config_path: /etc/ssh/sshd_config
+    ssh_user: root
+    ssh_key: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+  tasks:
+    - name: Copy SSH key to the user
+      ansible.posix.authorized_key:
+        user: "{{ ssh_user }}"
+        state: present
+        key: "{{ ssh_key }}"
+
+    - name: Ensure PasswordAuthentication is set to no in sshd_config
+      ansible.builtin.lineinfile:
+        path: "{{ ssh_config_path }}"
+        regexp: '^PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+        state: present
+        backup: true
+
+    - name: Restart SSH and SSHD services
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: restarted
+      loop:
+        - ssh
+        - sshd
+
+- name: Initial configuration
+  hosts: new
+  tasks:
+    - name: Install basic stuff
+      ansible.builtin.apt:
+        name:
+          - git
+          - docker.io
+          - docker-compose
+          - vim
+          - jq
+          - tmux
+        state: present
+
+    - name: Clone tmux plugin manager (tpm) if not already cloned
+      ansible.builtin.shell: test -d ~/.tmux/plugins/tpm || git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Clone tmux configuration repository if not already cloned
+      ansible.builtin.shell: |
+        test -d "{{ ansible_user_dir }}/.config/tmux" || git clone https://github.com/im64/tmux "{{ ansible_user_dir }}/.config/tmux"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+- name: Install Golang 1.23.2
+  hosts: new
+  become: true
+  vars:
+    golang_version: "1.23.2"
+    golang_url: "https://go.dev/dl/go{{ golang_version }}.linux-amd64.tar.gz"
+    install_path: "/usr/local/go"
+    temp_file: "/tmp/go{{ golang_version }}.linux-amd64.tar.gz"
+
+  tasks:
+    - name: Check if Golang binary exists
+      ansible.builtin.stat:
+        path: /usr/local/go/bin/go
+      register: golang_stat
+
+    - name: Get installed Golang version if binary exists
+      ansible.builtin.command: /usr/local/go/bin/go version
+      register: go_version_output
+      when: golang_stat.stat.exists
+      ignore_errors: true
+      changed_when: false
+
+    - name: Set golang_needed fact based on installation and version
+      ansible.builtin.set_fact:
+        golang_needed: >-
+          {{
+            not golang_stat.stat.exists or
+            (go_version_output.stdout is defined and
+            "go{{ golang_version }}" not in go_version_output.stdout)
+          }}
+
+    - name: Download Golang tarball if needed
+      ansible.builtin.get_url:
+        url: "{{ golang_url }}"
+        dest: "{{ temp_file }}"
+        mode: "0755"
+      when: golang_needed
+
+    - name: Remove existing Golang directory if needed
+      ansible.builtin.file:
+        path: "{{ install_path }}"
+        state: absent
+      when: golang_needed
+
+    - name: Extract Golang tarball to /usr/local if needed
+      ansible.builtin.unarchive:
+        src: "{{ temp_file }}"
+        dest: "/usr/local"
+        remote_src: true
+      when: golang_needed
+
+    - name: Ensure correct permissions for Golang directory
+      ansible.builtin.file:
+        path: "{{ install_path }}"
+        state: directory
+        mode: "0755"
+        recurse: true
+      when: golang_needed
+
+    - name: Add Golang binary to PATH in current session
+      ansible.builtin.shell: |
+        export PATH=$PATH:/usr/local/go/bin
+      args:
+        executable: /bin/bash
+      when: golang_needed
+      changed_when: false
+
+    - name: Persist Golang PATH in bashrc
+      ansible.builtin.lineinfile:
+        path: ~/.bashrc
+        line: "export PATH=$PATH:/usr/local/go/bin"
+        state: present
+      when: golang_needed
+      changed_when: false
+
+    - name: Verify Golang installation
+      ansible.builtin.shell: |
+        source ~/.bashrc && go version
+      args:
+        executable: /bin/bash
+      when: golang_needed
+      register: go_version_check
+      changed_when: false
